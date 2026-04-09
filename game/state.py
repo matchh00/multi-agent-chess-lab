@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Iterable
 
 from models import Action, Event, Observation, Piece, Position
 from .board import Board
@@ -41,13 +42,7 @@ class GameState:
             for piece_id, piece in self.pieces.items()
             if piece.team == team
         }
-        visible_positions = {
-            (row, col)
-            for piece in own_pieces.values()
-            for row in range(piece.position.row - 2, piece.position.row + 3)
-            for col in range(piece.position.col - 2, piece.position.col + 3)
-            if self.board.contains(Position(row=row, col=col))
-        }
+        visible_positions = self._visible_positions(own_pieces.values())
 
         return Observation(
             team=team,
@@ -59,6 +54,26 @@ class GameState:
                 piece.position.to_dict()
                 for piece in sorted(self.pieces.values(), key=lambda item: item.id)
                 if (piece.position.row, piece.position.col) in visible_positions
+            ],
+        )
+
+    def observation_for_piece(self, piece_id: str) -> Observation:
+        piece = self.pieces.get(piece_id)
+        if piece is None:
+            raise ValueError(f"unknown piece id: {piece_id}")
+
+        own_piece = Piece(piece.id, piece.team, piece.position)
+        visible_positions = self._visible_positions([own_piece])
+        return Observation(
+            team=piece.team,
+            turn=self.turn,
+            active_team=self.active_team,
+            board_size=self.board.size,
+            own_pieces={own_piece.id: own_piece},
+            occupied_positions=[
+                current_piece.position.to_dict()
+                for current_piece in sorted(self.pieces.values(), key=lambda item: item.id)
+                if (current_piece.position.row, current_piece.position.col) in visible_positions
             ],
         )
 
@@ -99,6 +114,34 @@ class GameState:
 
         piece.position = action.target
         return self._event(action, "applied")
+
+    def is_action_valid(self, action: Action) -> bool:
+        if action.type == "wait":
+            return True
+        if action.type != "move":
+            return False
+        if action.piece_id is None or action.target is None:
+            return False
+
+        piece = self.pieces.get(action.piece_id)
+        if piece is None:
+            return False
+        if piece.team != self.active_team:
+            return False
+        if not self.board.contains(action.target):
+            return False
+
+        occupant = self.get_piece_at(action.target)
+        return occupant is None or occupant.id == piece.id
+
+    def _visible_positions(self, pieces: Iterable[Piece]) -> set[tuple[int, int]]:
+        return {
+            (row, col)
+            for piece in pieces
+            for row in range(piece.position.row - 2, piece.position.row + 3)
+            for col in range(piece.position.col - 2, piece.position.col + 3)
+            if self.board.contains(Position(row=row, col=col))
+        }
 
     def _event(self, action: Action, status: str, reason: str | None = None) -> Event:
         return Event(
