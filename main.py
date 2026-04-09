@@ -15,9 +15,19 @@ def piece_symbol(piece: Piece | None) -> str:
     if piece is None:
         return ".."
     team_prefix = "W" if piece.team == "white" else "B"
-    piece_hint = piece.id.split("_", maxsplit=1)[1] if "_" in piece.id else piece.id
-    kind_letter = piece_hint[0].upper() if piece_hint else "?"
+    kind_letter = {
+        "pawn": "P",
+        "knight": "N",
+        "bishop": "B",
+        "rook": "R",
+        "queen": "Q",
+        "king": "K",
+    }[piece.kind]
     return f"{team_prefix}{kind_letter}"
+
+
+def square_name(position: Position) -> str:
+    return f"{chr(ord('a') + position.col)}{position.row + 1}"
 
 
 def render_board(state: GameState) -> str:
@@ -45,6 +55,9 @@ def select_team_action(decisions: list[AgentDecision]) -> tuple[AgentDecision | 
     """Selection policy kept isolated so it can be swapped later."""
     if not decisions:
         return None, "No valid decisions available."
+    for decision in decisions:
+        if decision.proposed_action.type == "move":
+            return decision, "Selected first legal move (preferred over wait)."
     return decisions[0], "Selected first valid decision (simple policy)."
 
 
@@ -59,6 +72,7 @@ def choose_team_action(
     called_piece_ids: list[str] = []
     decision_piece_ids: list[str] = []
     filtered_out_piece_ids: list[str] = []
+    decision_debug: list[dict[str, object]] = []
 
     for piece_id in piece_ids:
         called_piece_ids.append(piece_id)
@@ -68,6 +82,21 @@ def choose_team_action(
         decisions.append(decision)
         if decision.proposed_action.piece_id is not None:
             decision_piece_ids.append(decision.proposed_action.piece_id)
+
+        is_valid, reason = state.explain_action(decision.proposed_action)
+        piece = state.pieces[piece_id]
+        target = decision.proposed_action.target
+        decision_debug.append(
+            {
+                "piece_id": piece_id,
+                "piece_kind": piece.kind,
+                "from": square_name(piece.position),
+                "proposed_action": decision.proposed_action.to_dict(),
+                "target_square": square_name(target) if target is not None else None,
+                "is_valid": is_valid,
+                "reason": reason,
+            }
+        )
 
     valid_piece_ids: list[str] = []
     for piece_id, decision in zip(piece_ids, decisions):
@@ -91,20 +120,55 @@ def choose_team_action(
         "filtered_out_piece_ids": filtered_out_piece_ids,
         "selected_piece_id": selected_piece_id,
         "selection_reason": selection_reason,
+        "decision_debug": decision_debug,
     }
+
+
+def add_standard_chess_pieces(state: GameState) -> None:
+    back_rank = ("rook", "knight", "bishop", "queen", "king", "bishop", "knight", "rook")
+
+    for col, kind in enumerate(back_rank):
+        state.add_piece(
+            Piece(
+                id=f"w_{kind}_{col + 1}",
+                team="white",
+                position=Position(row=0, col=col),
+            )
+        )
+        state.add_piece(
+            Piece(
+                id=f"b_{kind}_{col + 1}",
+                team="black",
+                position=Position(row=7, col=col),
+            )
+        )
+
+    for col in range(state.board.size):
+        state.add_piece(
+            Piece(
+                id=f"w_pawn_{col + 1}",
+                team="white",
+                position=Position(row=1, col=col),
+            )
+        )
+        state.add_piece(
+            Piece(
+                id=f"b_pawn_{col + 1}",
+                team="black",
+                position=Position(row=6, col=col),
+            )
+        )
 
 
 def main() -> None:
     # 1) Initialize game state.
     state = GameState()
 
-    # 2) Add a few pieces.
-    state.add_piece(Piece(id="w_pawn_1", team="white", position=Position(row=1, col=0)))
-    state.add_piece(Piece(id="w_knight_1", team="white", position=Position(row=0, col=1)))
-    state.add_piece(Piece(id="b_pawn_1", team="black", position=Position(row=6, col=0)))
+    # 2) Add a full standard chess setup.
+    add_standard_chess_pieces(state)
 
-    # 3) Run five turns, printing a readable trace each turn.
-    total_turns = 5
+    # 3) Run three turns, printing a readable trace each turn.
+    total_turns = 3
     for turn_number in range(1, total_turns + 1):
         active_team = state.active_team
 
@@ -132,10 +196,19 @@ def main() -> None:
         )
         print("\nPiece Agent Decisions:")
         print(pretty([decision.to_dict() for decision in decisions]))
+        print("\nDecision Legality:")
+        print(pretty(debug["decision_debug"]))
         print("\nChosen Team Action:")
         print(pretty(chosen_action.to_dict()))
+        chosen_validity, chosen_reason = state.explain_action(chosen_action)
+        print(
+            f"Chosen action legal before apply: {chosen_validity} "
+            f"({chosen_reason})"
+        )
 
-        state.step(chosen_action)
+        event = state.step(chosen_action)
+        print("\nStep Event:")
+        print(pretty(event.to_dict()))
 
         print("\nBoard (After Step):")
         print(render_board(state))

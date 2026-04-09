@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from math import gcd
 from typing import Iterable
 
 from models import Action, Event, Observation, Piece, Position
@@ -95,44 +96,44 @@ class GameState:
         if action.type == "wait":
             return self._event(action, "applied")
 
-        if action.type != "move":
-            return self._event(action, "rejected", f"unknown action type: {action.type}")
-        if action.piece_id is None or action.target is None:
-            return self._event(action, "rejected", "move requires piece_id and target")
+        is_valid, reason = self.explain_action(action)
+        if not is_valid:
+            return self._event(action, "rejected", reason)
 
-        piece = self.pieces.get(action.piece_id)
-        if piece is None:
-            return self._event(action, "rejected", f"unknown piece id: {action.piece_id}")
-        if piece.team != self.active_team:
-            return self._event(action, "rejected", "piece does not belong to active team")
-        if not self.board.contains(action.target):
-            return self._event(action, "rejected", "target is outside the board")
-
+        piece = self.pieces[action.piece_id]
         occupant = self.get_piece_at(action.target)
         if occupant is not None and occupant.id != piece.id:
-            return self._event(action, "rejected", "target is occupied")
+            del self.pieces[occupant.id]
 
         piece.position = action.target
         return self._event(action, "applied")
 
     def is_action_valid(self, action: Action) -> bool:
+        return self.explain_action(action)[0]
+
+    def explain_action(self, action: Action) -> tuple[bool, str]:
         if action.type == "wait":
-            return True
+            return True, "wait is always legal"
         if action.type != "move":
-            return False
+            return False, f"unknown action type: {action.type}"
         if action.piece_id is None or action.target is None:
-            return False
+            return False, "move requires piece_id and target"
 
         piece = self.pieces.get(action.piece_id)
         if piece is None:
-            return False
+            return False, f"unknown piece id: {action.piece_id}"
         if piece.team != self.active_team:
-            return False
+            return False, "piece does not belong to active team"
         if not self.board.contains(action.target):
-            return False
+            return False, "target is outside the board"
+        if action.target == piece.position:
+            return False, "piece must move to a different square"
 
         occupant = self.get_piece_at(action.target)
-        return occupant is None or occupant.id == piece.id
+        if occupant is not None and occupant.id != piece.id and occupant.team == piece.team:
+            return False, "target is occupied by a friendly piece"
+
+        return self._is_legal_piece_move(piece, action.target, occupant)
 
     def _visible_positions(self, pieces: Iterable[Piece]) -> set[tuple[int, int]]:
         return {
@@ -151,6 +152,98 @@ class GameState:
             status=status,
             reason=reason,
         )
+
+    def _is_legal_piece_move(
+        self, piece: Piece, target: Position, occupant: Piece | None
+    ) -> tuple[bool, str]:
+        row_delta = target.row - piece.position.row
+        col_delta = target.col - piece.position.col
+        abs_row_delta = abs(row_delta)
+        abs_col_delta = abs(col_delta)
+
+        if piece.kind == "pawn":
+            return self._is_legal_pawn_move(piece, target, occupant)
+        if piece.kind == "knight":
+            if (abs_row_delta, abs_col_delta) == (2, 1) or (abs_row_delta, abs_col_delta) == (1, 2):
+                return True, "legal knight move"
+            return False, "knight must move in an L shape"
+        if piece.kind == "bishop":
+            if abs_row_delta != abs_col_delta:
+                return False, "bishop must move diagonally"
+            if not self._path_is_clear(piece.position, target):
+                return False, "bishop path is blocked"
+            return True, "legal bishop move"
+        if piece.kind == "rook":
+            if row_delta != 0 and col_delta != 0:
+                return False, "rook must move horizontally or vertically"
+            if not self._path_is_clear(piece.position, target):
+                return False, "rook path is blocked"
+            return True, "legal rook move"
+        if piece.kind == "queen":
+            is_straight = row_delta == 0 or col_delta == 0
+            is_diagonal = abs_row_delta == abs_col_delta
+            if not is_straight and not is_diagonal:
+                return False, "queen must move horizontally, vertically, or diagonally"
+            if not self._path_is_clear(piece.position, target):
+                return False, "queen path is blocked"
+            return True, "legal queen move"
+        if piece.kind == "king":
+            if max(abs_row_delta, abs_col_delta) == 1:
+                return True, "legal king move"
+            return False, "king must move one square"
+
+        return False, f"unsupported piece type: {piece.kind}"
+
+    def _is_legal_pawn_move(
+        self, piece: Piece, target: Position, occupant: Piece | None
+    ) -> tuple[bool, str]:
+        direction = 1 if piece.team == "white" else -1
+        start_row = 1 if piece.team == "white" else self.board.size - 2
+        row_delta = target.row - piece.position.row
+        col_delta = target.col - piece.position.col
+
+        if col_delta == 0:
+            if occupant is not None and occupant.id != piece.id:
+                return False, "pawn cannot move forward into an occupied square"
+            if row_delta == direction:
+                return True, "legal pawn advance"
+            if row_delta == 2 * direction and piece.position.row == start_row:
+                intermediate = Position(
+                    row=piece.position.row + direction,
+                    col=piece.position.col,
+                )
+                if self.get_piece_at(intermediate) is not None:
+                    return False, "pawn double-step is blocked"
+                return True, "legal pawn double-step"
+            return False, "pawn forward move must be one square, or two from its starting rank"
+
+        if abs(col_delta) == 1 and row_delta == direction:
+            if occupant is None or occupant.id == piece.id:
+                return False, "pawn diagonal move requires an opposing piece to capture"
+            if occupant.team == piece.team:
+                return False, "pawn cannot capture a friendly piece"
+            return True, "legal pawn capture"
+
+        return False, "illegal pawn movement pattern"
+
+    def _path_is_clear(self, start: Position, target: Position) -> bool:
+        row_delta = target.row - start.row
+        col_delta = target.col - start.col
+        step_size = gcd(abs(row_delta), abs(col_delta))
+        if step_size == 0:
+            return False
+
+        row_step = row_delta // step_size
+        col_step = col_delta // step_size
+
+        current_row = start.row + row_step
+        current_col = start.col + col_step
+        while (current_row, current_col) != (target.row, target.col):
+            if self.get_piece_at(Position(row=current_row, col=current_col)) is not None:
+                return False
+            current_row += row_step
+            current_col += col_step
+        return True
 
     def to_dict(self) -> dict[str, object]:
         return {
