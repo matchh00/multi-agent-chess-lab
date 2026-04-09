@@ -4,7 +4,7 @@ import json
 
 from agents import PassiveAgent
 from game import GameState
-from models import Piece, Position
+from models import Observation, Piece, Position
 
 
 def pretty(data: object) -> str:
@@ -33,6 +33,14 @@ def render_board(state: GameState) -> str:
     return "\n".join(lines)
 
 
+def render_visible_squares(observation: Observation) -> str:
+    positions = sorted(
+        observation.occupied_positions,
+        key=lambda position: (position["row"], position["col"]),
+    )
+    return pretty(positions)
+
+
 def main() -> None:
     # 1) Initialize game state.
     state = GameState()
@@ -57,6 +65,9 @@ def main() -> None:
     # 4) Print all requested outputs.
     print("=== Observation ===")
     print(pretty(observation.to_dict()))
+
+    print(f"\n=== Visible Occupied Squares ({agent.team}) ===")
+    print(render_visible_squares(observation))
 
     print("\n=== Agent Decision ===")
     print(pretty(decision.to_dict()))

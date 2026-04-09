@@ -36,19 +36,29 @@ class GameState:
         return self.board.as_grid(self.pieces)
 
     def observation_for(self, team: str) -> Observation:
+        own_pieces = {
+            piece_id: Piece(piece.id, piece.team, piece.position)
+            for piece_id, piece in self.pieces.items()
+            if piece.team == team
+        }
+        visible_positions = {
+            (row, col)
+            for piece in own_pieces.values()
+            for row in range(piece.position.row - 2, piece.position.row + 3)
+            for col in range(piece.position.col - 2, piece.position.col + 3)
+            if self.board.contains(Position(row=row, col=col))
+        }
+
         return Observation(
             team=team,
             turn=self.turn,
             active_team=self.active_team,
             board_size=self.board.size,
-            own_pieces={
-                piece_id: Piece(piece.id, piece.team, piece.position)
-                for piece_id, piece in self.pieces.items()
-                if piece.team == team
-            },
+            own_pieces=own_pieces,
             occupied_positions=[
                 piece.position.to_dict()
                 for piece in sorted(self.pieces.values(), key=lambda item: item.id)
+                if (piece.position.row, piece.position.col) in visible_positions
             ],
         )
 
