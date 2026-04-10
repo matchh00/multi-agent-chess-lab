@@ -7,7 +7,13 @@ import json
 import streamlit as st
 
 from game import GameState
-from main import add_standard_chess_pieces, choose_team_action, piece_symbol, square_name
+from main import (
+    add_standard_chess_pieces,
+    choose_team_action,
+    piece_symbol,
+    report_summary,
+    square_name,
+)
 from models import Action, Position
 
 
@@ -123,10 +129,26 @@ def main() -> None:
         st.write("**Chosen action:** — (no step yet)")
     if last_debug is not None:
         st.write(f"**Acting team legal move total:** {last_debug.get('team_legal_move_total', 0)}")
+        st.write("**Team report summary:**")
+        st.json(last_debug.get("team_report_summary", {}))
 
     st.divider()
     st.subheader("Board")
     _render_board(state)
+
+    st.divider()
+    st.subheader("Structured Team Report")
+    current_team_report = state.team_report_for(state.active_team)
+    st.json(report_summary(current_team_report))
+    with st.expander("Sample Piece Report", expanded=False):
+        sample_piece_report = (
+            current_team_report.piece_reports[0].to_dict()
+            if current_team_report.piece_reports
+            else {}
+        )
+        st.json(sample_piece_report)
+    with st.expander("Full Team Report", expanded=False):
+        st.json(current_team_report.to_dict())
 
     st.divider()
     st.subheader("Current Legal Move Counts")

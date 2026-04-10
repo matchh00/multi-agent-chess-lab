@@ -3,7 +3,18 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Iterable
 
-from models import Action, Event, LegalMove, Observation, Piece, Position
+from models import (
+    Action,
+    Event,
+    LegalCandidateMoveReport,
+    LegalMove,
+    Observation,
+    Piece,
+    PieceObservationReport,
+    Position,
+    TeamObservationReport,
+    VisiblePieceReport,
+)
 from .board import Board
 
 
@@ -101,6 +112,106 @@ class GameState:
             is_in_check=self.is_in_check(piece.team),
             is_checkmate=self.is_checkmate(piece.team),
             is_stalemate=self.is_stalemate(piece.team),
+        )
+
+    def piece_report_for(self, piece_id: str) -> PieceObservationReport:
+        piece = self.pieces.get(piece_id)
+        if piece is None:
+            raise ValueError(f"unknown piece id: {piece_id}")
+
+        visible_positions = self._visible_positions([piece])
+        visible_squares = self._serialize_positions(visible_positions)
+        visible_allies: list[VisiblePieceReport] = []
+        visible_enemies: list[VisiblePieceReport] = []
+        for current_piece in sorted(self.pieces.values(), key=lambda item: item.id):
+            square = (current_piece.position.row, current_piece.position.col)
+            if square not in visible_positions:
+                continue
+            snapshot = VisiblePieceReport.from_piece(current_piece)
+            if current_piece.team == piece.team:
+                visible_allies.append(snapshot)
+            else:
+                visible_enemies.append(snapshot)
+
+        attack_counts = self._filter_square_counts(
+            self.attack_count_by_square(self._opponent_of(piece.team)),
+            visible_positions,
+        )
+        defense_counts = self._filter_square_counts(
+            self.defense_count_by_square(piece.team),
+            visible_positions,
+        )
+        legal_candidate_moves = [
+            LegalCandidateMoveReport.from_legal_move(piece.id, piece.position, move)
+            for move in self.legal_moves_for_piece(piece.id)
+        ]
+
+        return PieceObservationReport(
+            piece_id=piece.id,
+            piece_kind=piece.kind,
+            team=piece.team,
+            current_position=piece.position,
+            visible_squares=visible_squares,
+            visible_allies=visible_allies,
+            visible_enemies=visible_enemies,
+            attack_counts_by_square=attack_counts,
+            defense_counts_by_square=defense_counts,
+            legal_candidate_moves=legal_candidate_moves,
+            short_local_note=self._build_short_local_note(
+                visible_enemies=visible_enemies,
+                attack_counts_by_square=attack_counts,
+                legal_candidate_moves=legal_candidate_moves,
+            ),
+        )
+
+    def team_report_for(self, team: str) -> TeamObservationReport:
+        piece_reports = [
+            self.piece_report_for(piece.id)
+            for piece in sorted(self.pieces.values(), key=lambda item: item.id)
+            if piece.team == team
+        ]
+
+        visible_square_union: set[tuple[int, int]] = set()
+        team_visible_enemies_by_id: dict[str, VisiblePieceReport] = {}
+        team_candidate_moves: list[LegalCandidateMoveReport] = []
+        for report in piece_reports:
+            visible_square_union.update(
+                (square["row"], square["col"]) for square in report.visible_squares
+            )
+            for visible_enemy in report.visible_enemies:
+                team_visible_enemies_by_id[visible_enemy.piece_id] = visible_enemy
+            team_candidate_moves.extend(report.legal_candidate_moves)
+
+        return TeamObservationReport(
+            team=team,
+            turn=self.turn,
+            active_team=self.active_team,
+            piece_reports=piece_reports,
+            visible_square_union=self._serialize_positions(visible_square_union),
+            team_visible_enemies=[
+                team_visible_enemies_by_id[piece_id]
+                for piece_id in sorted(team_visible_enemies_by_id)
+            ],
+            team_candidate_moves=sorted(
+                team_candidate_moves,
+                key=lambda move: (
+                    move.piece_id,
+                    move.target.row,
+                    move.target.col,
+                ),
+            ),
+            metadata={
+                "board_size": self.board.size,
+                "generated_from_true_board_state": True,
+                "visibility_rule": "within_chebyshev_distance_2",
+                "piece_report_count": len(piece_reports),
+                "visible_square_union_count": len(visible_square_union),
+                "team_visible_enemy_count": len(team_visible_enemies_by_id),
+                "team_candidate_move_count": len(team_candidate_moves),
+                "is_in_check": self.is_in_check(team),
+                "is_checkmate": self.is_checkmate(team),
+                "is_stalemate": self.is_stalemate(team),
+            },
         )
 
     def step(self, action: Action | None = None) -> Event:
@@ -527,6 +638,54 @@ class GameState:
             f"{chr(ord('a') + col)}{row + 1}": count
             for (row, col), count in sorted(counts.items())
         }
+
+    def _serialize_positions(
+        self, positions: Iterable[tuple[int, int]]
+    ) -> list[dict[str, int]]:
+        return [
+            {"row": row, "col": col}
+            for row, col in sorted(positions)
+        ]
+
+    def _filter_square_counts(
+        self,
+        counts: dict[tuple[int, int], int],
+        visible_positions: set[tuple[int, int]],
+    ) -> dict[str, int]:
+        return self._serialize_square_counts(
+            {
+                square: count
+                for square, count in counts.items()
+                if square in visible_positions
+            }
+        )
+
+    def _build_short_local_note(
+        self,
+        visible_enemies: list[VisiblePieceReport],
+        attack_counts_by_square: dict[str, int],
+        legal_candidate_moves: list[LegalCandidateMoveReport],
+    ) -> str:
+        enemy_controlled_visible_squares = sum(
+            1 for count in attack_counts_by_square.values() if count > 0
+        )
+        if visible_enemies:
+            return (
+                f"sees {len(visible_enemies)} visible enemies; "
+                f"{enemy_controlled_visible_squares} visible squares under enemy control; "
+                f"{len(legal_candidate_moves)} legal moves"
+            )
+        if legal_candidate_moves:
+            return (
+                f"no visible enemies; "
+                f"{enemy_controlled_visible_squares} visible squares under enemy control; "
+                f"{len(legal_candidate_moves)} legal moves"
+            )
+        return (
+            f"no visible enemies; "
+            f"{enemy_controlled_visible_squares} visible squares under enemy control; "
+            "no legal moves"
+        )
 
     def _opponent_of(self, team: str) -> str:
         for candidate in self.teams:

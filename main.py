@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import json
+import os
 
 from agents import PassiveAgent
 from game import GameState
-from models import Action, AgentDecision, Observation, Piece, Position
+from models import Action, AgentDecision, Observation, Piece, Position, TeamObservationReport
 
 
 def pretty(data: object) -> str:
@@ -51,6 +52,15 @@ def render_visible_squares(observation: Observation) -> str:
     return pretty(positions)
 
 
+def report_summary(report: TeamObservationReport) -> dict[str, object]:
+    return {
+        "active_team": report.active_team,
+        "piece_report_count": len(report.piece_reports),
+        "visible_square_union_count": len(report.visible_square_union),
+        "candidate_move_count": len(report.team_candidate_moves),
+    }
+
+
 def select_team_action(decisions: list[AgentDecision]) -> tuple[AgentDecision | None, str]:
     """Selection policy kept isolated so it can be swapped later."""
     if not decisions:
@@ -73,6 +83,7 @@ def choose_team_action(
     decision_piece_ids: list[str] = []
     filtered_out_piece_ids: list[str] = []
     decision_debug: list[dict[str, object]] = []
+    team_report = state.team_report_for(team)
 
     for piece_id in piece_ids:
         called_piece_ids.append(piece_id)
@@ -117,6 +128,11 @@ def choose_team_action(
 
     return selected_action, decisions, {
         "active_team_piece_ids": piece_ids,
+        "sample_piece_report": (
+            team_report.piece_reports[0].to_dict() if team_report.piece_reports else None
+        ),
+        "team_report_summary": report_summary(team_report),
+        "team_report": team_report.to_dict(),
         "called_piece_ids": called_piece_ids,
         "decision_piece_ids": decision_piece_ids,
         "valid_piece_ids": valid_piece_ids,
@@ -173,6 +189,12 @@ def main() -> None:
 
     # 3) Run three turns, printing a readable trace each turn.
     total_turns = 3
+    verbose_reports = os.environ.get("CHESS_REPORT_VERBOSE", "").lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
     for turn_number in range(1, total_turns + 1):
         active_team = state.active_team
 
@@ -185,6 +207,8 @@ def main() -> None:
 
         print("\nVisible Occupied Squares:")
         print(render_visible_squares(team_observation))
+        print("\nTeam Report Summary:")
+        print(pretty(debug["team_report_summary"]))
         print("\nDebug (Piece-Agent Flow):")
         print(f"active-team piece ids: {debug['active_team_piece_ids']}")
         print(f"agent calls for piece ids: {debug['called_piece_ids']}")
@@ -199,6 +223,11 @@ def main() -> None:
             f"({debug['selection_reason']})"
         )
         print(f"team legal move total: {debug['team_legal_move_total']}")
+        if verbose_reports:
+            print("\nSample Piece Report:")
+            print(pretty(debug["sample_piece_report"]))
+            print("\nFull Team Report:")
+            print(pretty(debug["team_report"]))
         print("\nPiece Agent Decisions:")
         print(pretty([decision.to_dict() for decision in decisions]))
         print("\nDecision Legality:")
