@@ -31,11 +31,14 @@ def _ensure_session() -> None:
         st.session_state.game = _new_game()
     if "last_action" not in st.session_state:
         st.session_state.last_action = None
+    if "last_debug" not in st.session_state:
+        st.session_state.last_debug = None
 
 
 def _reset() -> None:
     st.session_state.game = _new_game()
     st.session_state.last_action = None
+    st.session_state.last_debug = None
 
 
 def _next_turn() -> None:
@@ -43,8 +46,9 @@ def _next_turn() -> None:
     if state.is_finished:
         return
     active = state.active_team
-    chosen_action, _, _ = choose_team_action(state, active)
+    chosen_action, _, debug = choose_team_action(state, active)
     st.session_state.last_action = chosen_action
+    st.session_state.last_debug = debug
     state.step(chosen_action)
 
 
@@ -99,19 +103,47 @@ def main() -> None:
 
     state: GameState = st.session_state.game
     last: Action | None = st.session_state.last_action
+    last_debug: dict[str, object] | None = st.session_state.last_debug
 
     st.divider()
     st.subheader("Status")
     st.write(f"**Active team:** {state.active_team}")
     st.write(f"**Turn counter:** {state.turn} (increments after each step)")
+    st.write(f"**Finished:** {state.is_finished}")
+    if state.winner is not None:
+        st.write(f"**Winner:** {state.winner}")
+    if state.termination_reason is not None:
+        st.write(f"**End reason:** {state.termination_reason}")
+    st.write(f"**Check on active team:** {state.is_in_check(state.active_team)}")
+    st.write(f"**Checkmate on active team:** {state.is_checkmate(state.active_team)}")
+    st.write(f"**Stalemate on active team:** {state.is_stalemate(state.active_team)}")
     if last is not None:
         st.write(f"**Chosen action:** {_format_action(last)}")
     else:
         st.write("**Chosen action:** — (no step yet)")
+    if last_debug is not None:
+        st.write(f"**Acting team legal move total:** {last_debug.get('team_legal_move_total', 0)}")
 
     st.divider()
     st.subheader("Board")
     _render_board(state)
+
+    st.divider()
+    st.subheader("Current Legal Move Counts")
+    move_counts = {
+        piece_id: len(moves)
+        for piece_id, moves in state.legal_moves_for_team(state.active_team).items()
+    }
+    st.json(move_counts)
+
+    st.divider()
+    st.subheader("Current Square Control")
+    st.json(
+        {
+            "attack_count_by_square": state.observation_for(state.active_team).attack_count_by_square,
+            "defense_count_by_square": state.observation_for(state.active_team).defense_count_by_square,
+        }
+    )
 
 
 if __name__ == "__main__":

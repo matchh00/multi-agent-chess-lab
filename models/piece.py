@@ -10,9 +10,12 @@ class Piece:
     id: str
     team: str
     position: Position
+    kind_name: str | None = None
 
     @property
     def kind(self) -> str:
+        if self.kind_name is not None:
+            return self.kind_name
         normalized_id = self.id.lower()
         piece_kinds = ("pawn", "knight", "bishop", "rook", "queen", "king")
         for piece_kind in piece_kinds:
@@ -28,6 +31,7 @@ class Piece:
             "id": self.id,
             "team": self.team,
             "position": self.position.to_dict(),
+            "kind": self.kind_name,
         }
 
     @classmethod
@@ -40,4 +44,5 @@ class Piece:
             id=str(data["id"]),
             team=str(data["team"]),
             position=Position.from_dict(position_data),
+            kind_name=str(data["kind"]) if data.get("kind") is not None else None,
         )

@@ -30,34 +30,36 @@ class PassiveAgent:
                 confidence=1.0,
             )
 
-        occupied_positions = {
-            (position["row"], position["col"])
-            for position in observation.occupied_positions
-            if "row" in position and "col" in position
-        }
-
-        for row_delta, col_delta in self._nearby_offsets():
-            target_row = piece.position.row + row_delta
-            target_col = piece.position.col + col_delta
-            if not (0 <= target_row < observation.board_size):
-                continue
-            if not (0 <= target_col < observation.board_size):
-                continue
-            if (target_row, target_col) in occupied_positions:
-                continue
-
+        legal_moves = observation.legal_moves_by_piece.get(piece.id, [])
+        if not legal_moves:
+            message = f"No legal chess moves for {piece.id}; waiting."
+            if observation.is_checkmate:
+                message = f"{piece.id} is checkmated; waiting."
+            elif observation.is_stalemate:
+                message = f"{piece.id} is stalemated; waiting."
             return AgentDecision(
-                proposed_action=Action.move(
-                    piece_id=piece.id,
-                    target=Position(row=target_row, col=target_col),
-                ),
-                message=f"Trying nearby move for {piece.id}.",
+                proposed_action=Action.wait(),
+                message=message,
                 confidence=1.0,
             )
 
+        selected_move = sorted(
+            legal_moves,
+            key=lambda move: (
+                not move.capture,
+                move.enemy_attack_count,
+                -move.friendly_defense_count,
+                move.target.row,
+                move.target.col,
+            ),
+        )[0]
+
         return AgentDecision(
-            proposed_action=Action.wait(),
-            message=f"No valid nearby square for {piece.id}; waiting.",
+            proposed_action=Action.move(
+                piece_id=piece.id,
+                target=selected_move.target,
+            ),
+            message=f"Selected deterministic legal move for {piece.id}.",
             confidence=1.0,
         )
 
@@ -66,16 +68,3 @@ class PassiveAgent:
         if not own_pieces:
             return None
         return sorted(own_pieces, key=lambda current_piece: current_piece.id)[0]
-
-    def _nearby_offsets(self) -> tuple[tuple[int, int], ...]:
-        # Fixed probe order keeps behavior deterministic.
-        return (
-            (-1, 0),  # up
-            (0, 1),   # right
-            (1, 0),   # down
-            (0, -1),  # left
-            (-1, 1),  # up-right
-            (1, 1),   # down-right
-            (1, -1),  # down-left
-            (-1, -1), # up-left
-        )

@@ -1,8 +1,9 @@
 from .action import Action
 from .agent_decision import AgentDecision
 from .event import Event
+from .legal_move import LegalMove
 from .observation import Observation
 from .piece import Piece
 from .position import Position
 
-__all__ = ["Action", "AgentDecision", "Event", "Observation", "Piece", "Position"]
+__all__ = ["Action", "AgentDecision", "Event", "LegalMove", "Observation", "Piece", "Position"]

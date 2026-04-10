@@ -86,11 +86,14 @@ def choose_team_action(
         is_valid, reason = state.explain_action(decision.proposed_action)
         piece = state.pieces[piece_id]
         target = decision.proposed_action.target
+        legal_moves = observation.legal_moves_by_piece.get(piece_id, [])
         decision_debug.append(
             {
                 "piece_id": piece_id,
                 "piece_kind": piece.kind,
                 "from": square_name(piece.position),
+                "legal_move_count": len(legal_moves),
+                "legal_moves": [move.to_dict() for move in legal_moves],
                 "proposed_action": decision.proposed_action.to_dict(),
                 "target_square": square_name(target) if target is not None else None,
                 "is_valid": is_valid,
@@ -121,6 +124,7 @@ def choose_team_action(
         "selected_piece_id": selected_piece_id,
         "selection_reason": selection_reason,
         "decision_debug": decision_debug,
+        "team_legal_move_total": sum(item["legal_move_count"] for item in decision_debug),
     }
 
 
@@ -194,10 +198,22 @@ def main() -> None:
             f"selected decision piece id: {debug['selected_piece_id']} "
             f"({debug['selection_reason']})"
         )
+        print(f"team legal move total: {debug['team_legal_move_total']}")
         print("\nPiece Agent Decisions:")
         print(pretty([decision.to_dict() for decision in decisions]))
         print("\nDecision Legality:")
         print(pretty(debug["decision_debug"]))
+        print("\nStatus Before Step:")
+        print(
+            pretty(
+                {
+                    "active_team": active_team,
+                    "is_in_check": state.is_in_check(active_team),
+                    "is_checkmate": state.is_checkmate(active_team),
+                    "is_stalemate": state.is_stalemate(active_team),
+                }
+            )
+        )
         print("\nChosen Team Action:")
         print(pretty(chosen_action.to_dict()))
         chosen_validity, chosen_reason = state.explain_action(chosen_action)
@@ -212,6 +228,22 @@ def main() -> None:
 
         print("\nBoard (After Step):")
         print(render_board(state))
+        print("\nStatus After Step:")
+        print(
+            pretty(
+                {
+                    "next_active_team": state.active_team,
+                    "is_finished": state.is_finished,
+                    "winner": state.winner,
+                    "termination_reason": state.termination_reason,
+                    "is_in_check": state.is_in_check(state.active_team),
+                    "is_checkmate": state.is_checkmate(state.active_team),
+                    "is_stalemate": state.is_stalemate(state.active_team),
+                }
+            )
+        )
+        if state.is_finished:
+            break
 
     # 4) Print final summary after all turns.
     print("\n=== Final State ===")
